@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<!--
+  NeedsCharging: SUCCESS while the robot should be charging, with hysteresis –
+  true below battery_low, and stays true (recharging latch) until the battery is
+  above battery_charged.
+
+  Use with <SubTree ID="NeedsCharging" _autoremap="true"/> (or remap each port).
+  Reads: battery_topic, battery_low, battery_charged, battery_is_voltage,
+         recharging (bool latch, set by the including tree; must exist as a bool
+         before the first tick, e.g. 'recharging: false' in the mission YAML).
+  Needs the nav2_is_battery_low_condition_bt_node plugin.
+-->
+<root BTCPP_format="4">
+
+  <BehaviorTree ID="NeedsCharging">
+    <Fallback>
+      <IsBatteryLow name="battery_low"
+                    min_battery="{battery_low}" battery_topic="{battery_topic}"
+                    is_voltage="{battery_is_voltage}"/>
+      <Sequence name="still_recharging">
+        <ScriptCondition code="recharging"/>
+        <IsBatteryLow name="not_yet_charged"
+                      min_battery="{battery_charged}" battery_topic="{battery_topic}"
+                      is_voltage="{battery_is_voltage}"/>
+      </Sequence>
+    </Fallback>
+  </BehaviorTree>
+
+</root>

@@ -1,0 +1,30 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>mission_behavior_tree</name>
+  <version>0.0.0</version>
+  <description>Generic runner for mission behavior trees (e.g. battery-aware patrolling) driving the robot through commander_operator and crl_commander.</description>
+  <maintainer email="herolada@fel.cvut.cz">Adam Herold</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>behaviortree_cpp</depend>
+  <depend>ament_index_cpp</depend>
+  <depend>crl_commander_interfaces</depend>
+  <depend>commander_operator_interfaces</depend>
+
+  <!-- battery_patrol: IsBatteryLow is loaded at runtime from its BT plugin
+       library, WaitForMessage looks the BatteryState type support up by name. -->
+  <exec_depend>nav2_behavior_tree</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
+  <test_depend>std_msgs</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

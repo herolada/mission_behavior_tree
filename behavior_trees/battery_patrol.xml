@@ -1,0 +1,62 @@
+<?xml version="1.0"?>
+<!--
+  Patrol a route; when the battery runs low, go home and stay there until it is
+  charged again, then resume the patrol.
+
+  Blackboard entries (from the blackboard: section of config/battery_patrol.yaml):
+    battery_topic, battery_low, battery_charged, battery_is_voltage,
+    home_waypoint, home_wgs, patrol_route, patrol_wgs,
+    operator_request_service, commander_state_topic,
+    accept_timeout, stuck_timeout,
+    recharging (bool latch, initially false; kept across tree restarts).
+
+  WhileDoElse re-checks NeedsCharging on every tick and halts the branch it
+  switches away from. A failed branch fails the whole tree (mission_bt_node
+  restarts it after retry_delay) instead of falling through to the other one.
+-->
+<root BTCPP_format="4" main_tree_to_execute="BatteryPatrol">
+
+  <!-- Relative to this file. -->
+  <include path="subtrees/needs_charging.xml"/>
+
+  <BehaviorTree ID="BatteryPatrol">
+    <Sequence>
+      <!-- IsBatteryLow reports "not low" until it has heard from the battery,
+           which would send the robot patrolling. Same QoS as IsBatteryLow
+           (reliable). Done once per (re)start; Sequence does not re-tick it. -->
+      <WaitForMessage name="wait_for_battery"
+                      topic="{battery_topic}" type="sensor_msgs/msg/BatteryState"/>
+
+      <WhileDoElse>
+        <SubTree ID="NeedsCharging" _autoremap="true"/>
+
+        <Sequence name="go_home_and_charge">
+          <SetBlackboard output_key="recharging" value="true"/>
+          <OperatorRequest name="go_home"
+                           goal="{home_waypoint}" route="false" wgs="{home_wgs}"
+                           service="{operator_request_service}"
+                           state_topic="{commander_state_topic}"
+                           accept_timeout="{accept_timeout}"
+                           stuck_timeout="{stuck_timeout}"/>
+          <!-- Hold here (RUNNING) until NeedsCharging turns false. -->
+          <KeepRunningUntilFailure name="wait_until_charged">
+            <AlwaysSuccess/>
+          </KeepRunningUntilFailure>
+        </Sequence>
+
+        <Sequence name="patrol">
+          <SetBlackboard output_key="recharging" value="false"/>
+          <!-- Returns SUCCESS only for a non-looping route, after which the tree
+               is restarted and the route sent again. -->
+          <OperatorRequest name="patrol_route"
+                           goal="{patrol_route}" route="true" wgs="{patrol_wgs}"
+                           service="{operator_request_service}"
+                           state_topic="{commander_state_topic}"
+                           accept_timeout="{accept_timeout}"
+                           stuck_timeout="{stuck_timeout}"/>
+        </Sequence>
+      </WhileDoElse>
+    </Sequence>
+  </BehaviorTree>
+
+</root>

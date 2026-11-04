@@ -1,0 +1,86 @@
+## Mission behavior tree
+
+Drives high-level missions with a [BehaviorTree.CPP](https://www.behaviortree.dev/) tree. The tree only talks to `commander_operator` (by waypoint / route *name*) and watches `crl_commander`'s `~/state`, it never commands Nav2 directly.
+
+```
+ros2 launch mission_behavior_tree mission.launch.py [mission:=battery_patrol] [params_file:=...]
+```
+
+### Missions
+
+`mission_bt_node` is generic: a mission is a tree XML plus a YAML in `config/`, and `mission:=<name>` loads `config/<name>.yaml`. To add a mission, add both, no C++ needed (unless it needs new BT nodes).
+
+```yaml
+mission_behavior_tree:
+  ros__parameters:
+    tree_file: my_mission.xml     # relative to behavior_trees/, or absolute
+    tick_rate_hz: 10.0
+    retry_delay_sec: 5.0          # wait before restarting a failed tree
+    groot_port: 1667              # Groot2 monitoring, 0 disables
+    bt_plugins: [...]             # BT.CPP plugin libraries, e.g. nav2 condition nodes
+    blackboard:                   # copied into the blackboard, use as {key} in the XML
+      some_key: value
+```
+
+- `bool`, `double` and `string` values keep their type in the blackboard. Integers and arrays are stored as strings (arrays `;`-joined), which BT.CPP parses into whatever type the port expects. That way an integer can feed an `int`, `unsigned` or `double` port.
+- The blackboard entry `node` (the `rclcpp::Node`) is always set and cannot be overridden.
+- A top-level parameter the runner does not know is reported as a warning. Mission parameters must go under `blackboard:`.
+- A key the tree uses but the YAML lacks is only reported when that node is first ticked.
+- The tree is restarted right after it succeeds, and `retry_delay_sec` after it fails.
+
+Always registered: `OperatorRequest`, `WaitForMessage` (below), and the BT.CPP built-ins.
+
+### Subtrees
+
+Reusable subtrees live in `behavior_trees/subtrees/`, one file each. A tree pulls them in with `<include path="subtrees/<file>.xml"/>`, where the path is relative to the including file, and then uses them with `<SubTree ID="..." _autoremap="true"/>`. The header comment of each subtree file lists the blackboard entries it reads and writes.
+
+- `needs_charging.xml` (`NeedsCharging`): SUCCESS while the robot should charge. This is true below `battery_low` and stays true (via the `recharging` latch) until the battery is above `battery_charged`.
+
+### battery_patrol.xml
+
+```
+Sequence
+├── WaitForMessage(battery_topic)
+└── WhileDoElse
+    ├── NeedsCharging:  IsBatteryLow(battery_low)  OR  (recharging AND IsBatteryLow(battery_charged))
+    ├── go_home_and_charge:  recharging := true → OperatorRequest(home_waypoint) → wait until charged
+    └── patrol:              recharging := false → OperatorRequest(patrol_route, route)
+```
+
+- The condition is re-checked every tick, the branch switched away from is halted.
+- `recharging` is a latch: below `battery_low` the robot goes home and stays there until the battery is above `battery_charged`.
+- A failing branch fails the whole tree (it never falls through to the other branch), `mission_bt_node` restarts it after `retry_delay_sec`.
+- A non-looping patrol route that finishes makes the tree succeed, it is then restarted and the route sent again. With `sequence_loop` set in `crl_commander` the route never finishes.
+- Nothing is decided before the first message on `battery_topic` (on every (re)start of the tree), because `IsBatteryLow` reports "not low" until it hears from the battery.
+
+All parameters are in `config/battery_patrol.yaml`. `IsBatteryLow` (from `nav2_behavior_tree`) compares `sensor_msgs/BatteryState.percentage` (0..1), or `.voltage` with `battery_is_voltage: true`, and its subscription uses the system default (reliable) QoS. Monitor the tree live with Groot2 on `groot_port`.
+
+### OperatorRequest
+
+Sends one request through `commander_operator`'s `~/operator_request` service and stays RUNNING until it is completed:
+
+- **SUCCESS**: `crl_commander` took the request up (`CommanderState.goal_id` grew past the value seen before sending) and is `idle` again.
+- **FAILURE**: `commander_operator` rejected it, it was not taken up within `accept_timeout`, or the commander was `stuck` for longer than `stuck_timeout`.
+
+The request is sent once per entry of the node, never on re-ticks (every request makes `crl_commander` cancel and replan). Halting it sends nothing.
+
+| Port | Default | |
+|---|---|---|
+| `goal` | | waypoint / route name |
+| `route` | `false` | `goal` is a route |
+| `wgs` | `false` | look `goal` up among the WGS waypoints / routes |
+| `service` | `/commander_operator/operator_request` | |
+| `state_topic` | `/crl_commander/state` | |
+| `accept_timeout` | `10.0` | [s] |
+| `stuck_timeout` | `30.0` | [s] |
+
+### WaitForMessage
+
+Subscribes to `topic` on entry and stays RUNNING until a message arrives there (SUCCESS). It fails after `timeout`, if one is set. It takes any message type, by name. Only messages published after entry count. Set `best_effort` to match the QoS of whatever else reads the topic.
+
+| Port | Default | |
+|---|---|---|
+| `topic` | | |
+| `type` | | e.g. `sensor_msgs/msg/BatteryState` |
+| `best_effort` | `false` | subscribe best-effort instead of reliable |
+| `timeout` | `0.0` | [s], 0 waits forever |
