@@ -22,10 +22,12 @@
 namespace
 {
 
-double g_battery = 1.0;
+double g_battery = 100.0;
 std::vector<std::string> g_sent;    // goal of every request sent, in order
 std::vector<std::string> g_halted;  // goal of every request halted, in order
 std::map<std::string, BT::NodeStatus> g_result;  // onRunning() result per goal
+// Latest request per goal, as read from the ports.
+std::map<std::string, commander_operator_interfaces::msg::OperatorRequest> g_request;
 
 class FakeBatteryLow : public BT::ConditionNode
 {
@@ -64,6 +66,12 @@ public:
   {
     goal_ = getInput<std::string>("goal").value();
     g_sent.push_back(goal_);
+    auto & request = g_request[goal_];
+    request.goal = goal_;
+    request.route = getInput<bool>("route").value();
+    request.wgs = getInput<bool>("wgs").value();
+    request.route_goal_point = getInput<std::string>("route_goal_point").value();
+    request.loop = getInput<bool>("loop").value();
     return BT::NodeStatus::RUNNING;
   }
 
@@ -89,10 +97,11 @@ protected:
 
   void SetUp() override
   {
-    g_battery = 1.0;
+    g_battery = 100.0;
     g_sent.clear();
     g_halted.clear();
     g_result.clear();
+    g_request.clear();
 
     factory_.registerNodeType<FakeBatteryLow>("IsBatteryLow");
     factory_.registerNodeType<FakeOperatorRequest>("OperatorRequest");
@@ -128,16 +137,16 @@ using Goals = std::vector<std::string>;
 
 TEST_F(BatteryPatrolTree, PatrolsOnceWithFullBattery)
 {
-  g_battery = 0.5;
+  g_battery = 50.0;
   EXPECT_EQ(tickTimes(5), BT::NodeStatus::RUNNING);
   EXPECT_EQ(g_sent, Goals{"patrol"});
 }
 
 TEST_F(BatteryPatrolTree, LowBatteryHaltsPatrolAndGoesHomeOnce)
 {
-  g_battery = 0.5;
+  g_battery = 50.0;
   tickTimes(3);
-  g_battery = 0.15;
+  g_battery = 15.0;
   EXPECT_EQ(tickTimes(5), BT::NodeStatus::RUNNING);
   EXPECT_EQ(g_sent, (Goals{"patrol", "home"}));
   EXPECT_EQ(g_halted, Goals{"patrol"});
@@ -145,29 +154,29 @@ TEST_F(BatteryPatrolTree, LowBatteryHaltsPatrolAndGoesHomeOnce)
 
 TEST_F(BatteryPatrolTree, StaysHomeUntilChargedThenResumesPatrol)
 {
-  g_battery = 0.15;
+  g_battery = 15.0;
   tickTimes(3);
   g_result["home"] = BT::NodeStatus::SUCCESS;  // arrived
   tickTimes(3);
 
   // Above battery_low but below battery_charged: the latch keeps it home.
-  g_battery = 0.5;
+  g_battery = 50.0;
   EXPECT_EQ(tickTimes(5), BT::NodeStatus::RUNNING);
   EXPECT_EQ(g_sent, Goals{"home"});
 
-  g_battery = 0.95;
+  g_battery = 95.0;
   EXPECT_EQ(tickTimes(3), BT::NodeStatus::RUNNING);
   EXPECT_EQ(g_sent, (Goals{"home", "patrol"}));
 
   // Latch released: dropping back below battery_charged keeps patrolling.
-  g_battery = 0.5;
+  g_battery = 50.0;
   tickTimes(3);
   EXPECT_EQ(g_sent, (Goals{"home", "patrol"}));
 }
 
 TEST_F(BatteryPatrolTree, FailingToGoHomeFailsTheTreeInsteadOfPatrolling)
 {
-  g_battery = 0.15;
+  g_battery = 15.0;
   tickTimes(2);
   g_result["home"] = BT::NodeStatus::FAILURE;
   EXPECT_EQ(tickTimes(1), BT::NodeStatus::FAILURE);
@@ -178,9 +187,9 @@ TEST_F(BatteryPatrolTree, RestartAfterFailureWhileRechargingKeepsGoingHome)
 {
   // Low → home; on the way the battery reads a little higher, then the home
   // request fails. The latch survives the restart, so it heads home again.
-  g_battery = 0.15;
+  g_battery = 15.0;
   tickTimes(2);
-  g_battery = 0.5;
+  g_battery = 50.0;
   g_result["home"] = BT::NodeStatus::FAILURE;
   EXPECT_EQ(tickTimes(1), BT::NodeStatus::FAILURE);
   tree_.haltTree();
@@ -188,6 +197,24 @@ TEST_F(BatteryPatrolTree, RestartAfterFailureWhileRechargingKeepsGoingHome)
   g_result.erase("home");
   EXPECT_EQ(tickTimes(2), BT::NodeStatus::RUNNING);
   EXPECT_EQ(g_sent, (Goals{"home", "home"}));
+}
+
+TEST_F(BatteryPatrolTree, LoopsThePatrolAndGoesHomeAlongWgsRoute)
+{
+  g_battery = 100.0;
+  tickTimes(3);
+  g_battery = 15.0;
+  tickTimes(3);
+  ASSERT_EQ(g_sent, (Goals{"patrol", "home"}));
+
+  EXPECT_TRUE(g_request["patrol"].route);
+  EXPECT_TRUE(g_request["patrol"].loop);
+  EXPECT_EQ(g_request["patrol"].route_goal_point, "");
+
+  EXPECT_TRUE(g_request["home"].route);
+  EXPECT_TRUE(g_request["home"].wgs);
+  EXPECT_FALSE(g_request["home"].loop);
+  EXPECT_EQ(g_request["home"].route_goal_point, "home");
 }
 
 TEST(Nav2Plugins, IsBatteryLowLoadsWithThePortsTheTreeUses)

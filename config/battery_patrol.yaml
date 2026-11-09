@@ -12,16 +12,17 @@ mission_behavior_tree:
     # strings, which BT.CPP parses to whatever type the port wants.
     blackboard:
       battery_topic: /battery_status   # sensor_msgs/BatteryState
-      battery_is_voltage: false        # false: compare .percentage (0..1), true: .voltage [V]
-      battery_low: 0.2                 # go home at or below this
-      battery_charged: 0.9             # resume patrolling above this
+      battery_is_voltage: false        # false: compare .percentage (0..100), true: .voltage [V]
+      battery_low: 25                 # go home at or below this
+      battery_charged: 90             # resume patrolling above this
       recharging: false                # latch used by NeedsCharging, must start false
 
       # commander_operator waypoint / route names (see its data/ folder)
-      home_waypoint: home
-      home_wgs: false
+      home_route: home
+      home_route_goal_point: home   # waypoint of home_route to drive to
+      home_wgs: true
       patrol_route: patrol
-      patrol_wgs: false
+      patrol_wgs: true
 
       operator_request_service: /commander_operator/operator_request
       commander_state_topic: /crl_commander/state

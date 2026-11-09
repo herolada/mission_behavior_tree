@@ -43,17 +43,18 @@ Sequence
 ├── WaitForMessage(battery_topic)
 └── WhileDoElse
     ├── NeedsCharging:  IsBatteryLow(battery_low)  OR  (recharging AND IsBatteryLow(battery_charged))
-    ├── go_home_and_charge:  recharging := true → OperatorRequest(home_waypoint) → wait until charged
-    └── patrol:              recharging := false → OperatorRequest(patrol_route, route)
+    ├── go_home_and_charge:  recharging := true → OperatorRequest(home_route, to home_route_goal_point) → wait until charged
+    └── patrol:              recharging := false → OperatorRequest(patrol_route, loop)
 ```
 
 - The condition is re-checked every tick, the branch switched away from is halted.
 - `recharging` is a latch: below `battery_low` the robot goes home and stays there until the battery is above `battery_charged`.
 - A failing branch fails the whole tree (it never falls through to the other branch), `mission_bt_node` restarts it after `retry_delay_sec`.
-- A non-looping patrol route that finishes makes the tree succeed, it is then restarted and the route sent again. With `sequence_loop` set in `crl_commander` the route never finishes.
+- The patrol route is requested with `loop`, so it never finishes on its own.
+- Going home drives the shortest part of the `home_route` route leading to its `home_route_goal_point` waypoint.
 - Nothing is decided before the first message on `battery_topic` (on every (re)start of the tree), because `IsBatteryLow` reports "not low" until it hears from the battery.
 
-All parameters are in `config/battery_patrol.yaml`. `IsBatteryLow` (from `nav2_behavior_tree`) compares `sensor_msgs/BatteryState.percentage` (0..1), or `.voltage` with `battery_is_voltage: true`, and its subscription uses the system default (reliable) QoS. Monitor the tree live with Groot2 on `groot_port`.
+All parameters are in `config/battery_patrol.yaml`. `IsBatteryLow` (from `nav2_behavior_tree`) compares `sensor_msgs/BatteryState.percentage` (0..100 on this robot, so that is the scale of `battery_low` and `battery_charged`), or `.voltage` with `battery_is_voltage: true`, and its subscription uses the system default (reliable) QoS. Monitor the tree live with Groot2 on `groot_port`.
 
 ### OperatorRequest
 
@@ -69,6 +70,8 @@ The request is sent once per entry of the node, never on re-ticks (every request
 | `goal` | | waypoint / route name |
 | `route` | `false` | `goal` is a route |
 | `wgs` | `false` | look `goal` up among the WGS waypoints / routes |
+| `route_goal_point` | empty | routes only: waypoint of the route to drive to, empty = whole route |
+| `loop` | `false` | whole routes only: continue from the first waypoint after the last one |
 | `service` | `/commander_operator/operator_request` | |
 | `state_topic` | `/crl_commander/state` | |
 | `accept_timeout` | `10.0` | [s] |

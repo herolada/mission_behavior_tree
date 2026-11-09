@@ -5,7 +5,7 @@
 
   Blackboard entries (from the blackboard: section of config/battery_patrol.yaml):
     battery_topic, battery_low, battery_charged, battery_is_voltage,
-    home_waypoint, home_wgs, patrol_route, patrol_wgs,
+    home_route, home_route_goal_point, home_wgs, patrol_route, patrol_wgs,
     operator_request_service, commander_state_topic,
     accept_timeout, stuck_timeout,
     recharging (bool latch, initially false; kept across tree restarts).
@@ -33,7 +33,8 @@
         <Sequence name="go_home_and_charge">
           <SetBlackboard output_key="recharging" value="true"/>
           <OperatorRequest name="go_home"
-                           goal="{home_waypoint}" route="false" wgs="{home_wgs}"
+                           goal="{home_route}" route="true" wgs="{home_wgs}"
+                           route_goal_point="{home_route_goal_point}" loop="false"
                            service="{operator_request_service}"
                            state_topic="{commander_state_topic}"
                            accept_timeout="{accept_timeout}"
@@ -46,10 +47,9 @@
 
         <Sequence name="patrol">
           <SetBlackboard output_key="recharging" value="false"/>
-          <!-- Returns SUCCESS only for a non-looping route, after which the tree
-               is restarted and the route sent again. -->
+          <!-- Looping, so it stays RUNNING until halted or failed. -->
           <OperatorRequest name="patrol_route"
-                           goal="{patrol_route}" route="true" wgs="{patrol_wgs}"
+                           goal="{patrol_route}" route="true" wgs="{patrol_wgs}" loop="true"
                            service="{operator_request_service}"
                            state_topic="{commander_state_topic}"
                            accept_timeout="{accept_timeout}"

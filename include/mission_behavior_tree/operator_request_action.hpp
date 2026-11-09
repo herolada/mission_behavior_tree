@@ -47,6 +47,12 @@ public:
       BT::InputPort<bool>("route", false, "true: 'goal' names a route, false: a waypoint"),
       BT::InputPort<bool>("wgs", false, "true: look 'goal' up among the WGS waypoints / routes"),
       BT::InputPort<std::string>(
+        "route_goal_point", std::string(""),
+        "Only for routes: waypoint of the route to drive to, empty = the whole route"),
+      BT::InputPort<bool>(
+        "loop", false,
+        "Only for whole routes: continue from the first waypoint after the last one"),
+      BT::InputPort<std::string>(
         "service", std::string("/commander_operator/operator_request"),
         "commander_operator's SendOperatorRequest service"),
       BT::InputPort<std::string>(

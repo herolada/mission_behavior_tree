@@ -51,8 +51,12 @@ BT::NodeStatus OperatorRequestAction::onStart()
   request_.goal  = *goal;
   request_.route = getInput<bool>("route").value();
   request_.wgs   = getInput<bool>("wgs").value();
+  request_.route_goal_point = getInput<std::string>("route_goal_point").value();
+  request_.loop  = getInput<bool>("loop").value();
   description_ = std::string(request_.route ? "route" : "waypoint") +
-    (request_.wgs ? " (wgs)" : "") + " '" + request_.goal + "'";
+    (request_.wgs ? " (wgs)" : "") + " '" + request_.goal + "'" +
+    (request_.route_goal_point.empty() ? "" : " to '" + request_.route_goal_point + "'") +
+    (request_.loop ? " (loop)" : "");
 
   monitor_ = RequestMonitor(
     getInput<double>("accept_timeout").value(), getInput<double>("stuck_timeout").value());
