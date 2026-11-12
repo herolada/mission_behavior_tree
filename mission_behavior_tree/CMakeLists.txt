@@ -13,13 +13,7 @@ find_package(ament_index_cpp REQUIRED)
 find_package(crl_commander_interfaces REQUIRED)
 find_package(commander_operator_interfaces REQUIRED)
 find_package(std_msgs REQUIRED)
-find_package(rosidl_default_generators REQUIRED)
-
-rosidl_generate_interfaces(${PROJECT_NAME}
-  "srv/LoadMission.srv"
-  "srv/SetMode.srv"
-)
-rosidl_get_typesupport_target(cpp_typesupport_target ${PROJECT_NAME} rosidl_typesupport_cpp)
+find_package(mission_behavior_tree_interfaces REQUIRED)
 
 # ── BT nodes and the tree runner ──────────────────────────────────────────────
 add_library(mission_bt_nodes SHARED
@@ -42,7 +36,7 @@ target_link_libraries(mission_bt_nodes PUBLIC
   ${crl_commander_interfaces_TARGETS}
   ${commander_operator_interfaces_TARGETS}
   ${std_msgs_TARGETS}
-  "${cpp_typesupport_target}"
+  ${mission_behavior_tree_interfaces_TARGETS}
 )
 
 # ── Tree runner node ──────────────────────────────────────────────────────────
@@ -153,6 +147,6 @@ endif()
 
 ament_export_include_directories(include/${PROJECT_NAME})
 ament_export_libraries(mission_bt_nodes)
-ament_export_dependencies(rclcpp behaviortree_cpp crl_commander_interfaces commander_operator_interfaces std_msgs rosidl_default_runtime)
+ament_export_dependencies(rclcpp behaviortree_cpp crl_commander_interfaces commander_operator_interfaces std_msgs mission_behavior_tree_interfaces)
 
 ament_package()

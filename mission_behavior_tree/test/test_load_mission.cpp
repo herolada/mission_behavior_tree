@@ -25,14 +25,14 @@
 #include <std_msgs/msg/string.hpp>
 
 #include "mission_behavior_tree/mission_behavior_tree.hpp"
-#include "mission_behavior_tree/srv/load_mission.hpp"
-#include "mission_behavior_tree/srv/set_mode.hpp"
+#include "mission_behavior_tree_interfaces/srv/load_mission.hpp"
+#include "mission_behavior_tree_interfaces/srv/set_mode.hpp"
 
 namespace
 {
 
-using LoadMission = mission_behavior_tree::srv::LoadMission;
-using SetMode = mission_behavior_tree::srv::SetMode;
+using LoadMission = mission_behavior_tree_interfaces::srv::LoadMission;
+using SetMode = mission_behavior_tree_interfaces::srv::SetMode;
 using SwitchMode = crl_commander_interfaces::srv::SwitchMode;
 namespace fs = std::filesystem;
 

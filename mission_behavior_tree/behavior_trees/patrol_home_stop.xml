@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <!--
   Operator-switched mission. The operator picks the mode with
-    ros2 service call /mission_behavior_tree/set_mode mission_behavior_tree/srv/SetMode "{mode: HOME}"
+    ros2 service call /mission_behavior_tree/set_mode mission_behavior_tree_interfaces/srv/SetMode "{mode: HOME}"
   and the runner keeps it in the blackboard entry 'mode':
     PATROL  battery_patrol.xml: patrol, going home to charge when the battery is low
     HOME    go home, then hold there until the mode changes
