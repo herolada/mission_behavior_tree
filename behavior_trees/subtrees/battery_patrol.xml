@@ -1,0 +1,55 @@
+<?xml version="1.0"?>
+<!--
+  BatteryPatrol: patrol a route; when the battery runs low, go home and stay
+  there until it is charged again, then resume the patrol. Never succeeds.
+
+  Use with <SubTree ID="BatteryPatrol" _autoremap="true"/>. The including file
+  must also include subtrees/needs_charging.xml and subtrees/go_home.xml.
+  Reads: battery_topic, battery_low, battery_charged, battery_is_voltage,
+         patrol_route, patrol_wgs, everything GoHome reads,
+         recharging (bool latch, must exist as false before the first tick,
+         e.g. 'recharging: false' in the mission YAML; kept across restarts).
+  Writes: recharging.
+  Needs the nav2_is_battery_low_condition_bt_node plugin.
+
+  WhileDoElse re-checks NeedsCharging on every tick and halts the branch it
+  switches away from. A failed branch fails the whole subtree instead of
+  falling through to the other one.
+-->
+<root BTCPP_format="4">
+
+  <BehaviorTree ID="BatteryPatrol">
+    <Sequence>
+      <!-- IsBatteryLow reports "not low" until it has heard from the battery,
+           which would send the robot patrolling. Same QoS as IsBatteryLow
+           (reliable). Done once per entry; Sequence does not re-tick it. -->
+      <WaitForMessage name="wait_for_battery"
+                      topic="{battery_topic}" type="sensor_msgs/msg/BatteryState"/>
+
+      <WhileDoElse>
+        <SubTree ID="NeedsCharging" _autoremap="true"/>
+
+        <Sequence name="go_home_and_charge">
+          <SetBlackboard output_key="recharging" value="true"/>
+          <SubTree ID="GoHome" _autoremap="true"/>
+          <!-- Hold here (RUNNING) until NeedsCharging turns false. -->
+          <KeepRunningUntilFailure name="wait_until_charged">
+            <AlwaysSuccess/>
+          </KeepRunningUntilFailure>
+        </Sequence>
+
+        <Sequence name="patrol">
+          <SetBlackboard output_key="recharging" value="false"/>
+          <!-- Looping, so it stays RUNNING until halted or failed. -->
+          <OperatorRequest name="patrol_route"
+                           goal="{patrol_route}" route="true" wgs="{patrol_wgs}" loop="true"
+                           service="{operator_request_service}"
+                           state_topic="{commander_state_topic}"
+                           accept_timeout="{accept_timeout}"
+                           stuck_timeout="{stuck_timeout}"/>
+        </Sequence>
+      </WhileDoElse>
+    </Sequence>
+  </BehaviorTree>
+
+</root>

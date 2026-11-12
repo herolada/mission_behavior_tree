@@ -1,7 +1,8 @@
 <?xml version="1.0"?>
 <!--
   Patrol a route; when the battery runs low, go home and stay there until it is
-  charged again, then resume the patrol.
+  charged again, then resume the patrol. All of it is the BatteryPatrol subtree
+  (subtrees/battery_patrol.xml), shared with patrol_home_stop.xml.
 
   Blackboard entries (from the blackboard: section of config/battery_patrol.yaml):
     battery_topic, battery_low, battery_charged, battery_is_voltage,
@@ -10,53 +11,18 @@
     accept_timeout, stuck_timeout,
     recharging (bool latch, initially false; kept across tree restarts).
 
-  WhileDoElse re-checks NeedsCharging on every tick and halts the branch it
-  switches away from. A failed branch fails the whole tree (mission_bt_node
-  restarts it after retry_delay) instead of falling through to the other one.
+  A failed branch fails the whole tree; mission_bt_node restarts it after
+  retry_delay.
 -->
-<root BTCPP_format="4" main_tree_to_execute="BatteryPatrol">
+<root BTCPP_format="4" main_tree_to_execute="BatteryPatrolMission">
 
   <!-- Relative to this file. -->
   <include path="subtrees/needs_charging.xml"/>
+  <include path="subtrees/go_home.xml"/>
+  <include path="subtrees/battery_patrol.xml"/>
 
-  <BehaviorTree ID="BatteryPatrol">
-    <Sequence>
-      <!-- IsBatteryLow reports "not low" until it has heard from the battery,
-           which would send the robot patrolling. Same QoS as IsBatteryLow
-           (reliable). Done once per (re)start; Sequence does not re-tick it. -->
-      <WaitForMessage name="wait_for_battery"
-                      topic="{battery_topic}" type="sensor_msgs/msg/BatteryState"/>
-
-      <WhileDoElse>
-        <SubTree ID="NeedsCharging" _autoremap="true"/>
-
-        <Sequence name="go_home_and_charge">
-          <SetBlackboard output_key="recharging" value="true"/>
-          <OperatorRequest name="go_home"
-                           goal="{home_route}" route="true" wgs="{home_wgs}"
-                           route_goal_point="{home_route_goal_point}" loop="false"
-                           service="{operator_request_service}"
-                           state_topic="{commander_state_topic}"
-                           accept_timeout="{accept_timeout}"
-                           stuck_timeout="{stuck_timeout}"/>
-          <!-- Hold here (RUNNING) until NeedsCharging turns false. -->
-          <KeepRunningUntilFailure name="wait_until_charged">
-            <AlwaysSuccess/>
-          </KeepRunningUntilFailure>
-        </Sequence>
-
-        <Sequence name="patrol">
-          <SetBlackboard output_key="recharging" value="false"/>
-          <!-- Looping, so it stays RUNNING until halted or failed. -->
-          <OperatorRequest name="patrol_route"
-                           goal="{patrol_route}" route="true" wgs="{patrol_wgs}" loop="true"
-                           service="{operator_request_service}"
-                           state_topic="{commander_state_topic}"
-                           accept_timeout="{accept_timeout}"
-                           stuck_timeout="{stuck_timeout}"/>
-        </Sequence>
-      </WhileDoElse>
-    </Sequence>
+  <BehaviorTree ID="BatteryPatrolMission">
+    <SubTree ID="BatteryPatrol" _autoremap="true"/>
   </BehaviorTree>
 
 </root>

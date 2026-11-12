@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<!--
+  GoHome: drive along home_route to its home_route_goal_point waypoint (the
+  shortest part of the route leading there). SUCCESS on arrival.
+
+  Use with <SubTree ID="GoHome" _autoremap="true"/> (or remap each port).
+  Reads: home_route, home_route_goal_point, home_wgs,
+         operator_request_service, commander_state_topic,
+         accept_timeout, stuck_timeout.
+-->
+<root BTCPP_format="4">
+
+  <BehaviorTree ID="GoHome">
+    <OperatorRequest name="go_home"
+                     goal="{home_route}" route="true" wgs="{home_wgs}"
+                     route_goal_point="{home_route_goal_point}" loop="false"
+                     service="{operator_request_service}"
+                     state_topic="{commander_state_topic}"
+                     accept_timeout="{accept_timeout}"
+                     stuck_timeout="{stuck_timeout}"/>
+  </BehaviorTree>
+
+</root>

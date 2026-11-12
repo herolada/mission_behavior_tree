@@ -12,10 +12,12 @@ find_package(behaviortree_cpp REQUIRED)
 find_package(ament_index_cpp REQUIRED)
 find_package(crl_commander_interfaces REQUIRED)
 find_package(commander_operator_interfaces REQUIRED)
+find_package(std_msgs REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/LoadMission.srv"
+  "srv/SetMode.srv"
 )
 rosidl_get_typesupport_target(cpp_typesupport_target ${PROJECT_NAME} rosidl_typesupport_cpp)
 
@@ -39,6 +41,7 @@ target_link_libraries(mission_bt_nodes PUBLIC
   ament_index_cpp::ament_index_cpp
   ${crl_commander_interfaces_TARGETS}
   ${commander_operator_interfaces_TARGETS}
+  ${std_msgs_TARGETS}
   "${cpp_typesupport_target}"
 )
 
@@ -71,7 +74,6 @@ install(DIRECTORY
 # ── Tests ────────────────────────────────────────────────────────────────────
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
-  find_package(std_msgs REQUIRED)
 
   ament_add_gtest(test_request_monitor
     test/test_request_monitor.cpp
@@ -132,11 +134,25 @@ if(BUILD_TESTING)
     BATTERY_PATROL_CONFIG="${CMAKE_CURRENT_SOURCE_DIR}/config/battery_patrol.yaml"
     STOP_TREE_XML="${CMAKE_CURRENT_SOURCE_DIR}/behavior_trees/stop.xml"
     STOP_CONFIG="${CMAKE_CURRENT_SOURCE_DIR}/config/stop.yaml"
+    PATROL_HOME_STOP_TREE_XML="${CMAKE_CURRENT_SOURCE_DIR}/behavior_trees/patrol_home_stop.xml"
+    PATROL_HOME_STOP_CONFIG="${CMAKE_CURRENT_SOURCE_DIR}/config/patrol_home_stop.yaml"
+  )
+
+  # Runs patrol_home_stop.xml against fake nodes, switching its mode.
+  ament_add_gtest(test_patrol_home_stop_tree
+    test/test_patrol_home_stop_tree.cpp
+  )
+  target_link_libraries(test_patrol_home_stop_tree
+    mission_bt_nodes
+  )
+  target_compile_definitions(test_patrol_home_stop_tree PRIVATE
+    PATROL_HOME_STOP_TREE_XML="${CMAKE_CURRENT_SOURCE_DIR}/behavior_trees/patrol_home_stop.xml"
+    PATROL_HOME_STOP_CONFIG="${CMAKE_CURRENT_SOURCE_DIR}/config/patrol_home_stop.yaml"
   )
 endif()
 
 ament_export_include_directories(include/${PROJECT_NAME})
 ament_export_libraries(mission_bt_nodes)
-ament_export_dependencies(rclcpp behaviortree_cpp crl_commander_interfaces commander_operator_interfaces rosidl_default_runtime)
+ament_export_dependencies(rclcpp behaviortree_cpp crl_commander_interfaces commander_operator_interfaces std_msgs rosidl_default_runtime)
 
 ament_package()

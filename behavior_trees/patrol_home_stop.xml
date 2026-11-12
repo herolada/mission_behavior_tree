@@ -1,0 +1,53 @@
+<?xml version="1.0"?>
+<!--
+  Operator-switched mission. The operator picks the mode with
+    ros2 service call /mission_behavior_tree/set_mode mission_behavior_tree/srv/SetMode "{mode: HOME}"
+  and the runner keeps it in the blackboard entry 'mode':
+    PATROL  battery_patrol.xml: patrol, going home to charge when the battery is low
+    HOME    go home, then hold there until the mode changes
+    STOP    stop the robot, then hold until the mode changes
+  The robot only leaves PATROL when the operator says so.
+
+  Switch3 re-reads 'mode' on every tick and halts the branch it switches away
+  from. A failed branch fails the whole tree, and mission_bt_node restarts it
+  after retry_delay, in the same mode (or right away in a newly set one).
+
+  Blackboard entries (from config/patrol_home_stop.yaml): those of
+  battery_patrol.xml, plus switch_mode_service and switch_mode_timeout.
+-->
+<root BTCPP_format="4" main_tree_to_execute="PatrolHomeStop">
+
+  <!-- Relative to this file. -->
+  <include path="subtrees/needs_charging.xml"/>
+  <include path="subtrees/go_home.xml"/>
+  <include path="subtrees/battery_patrol.xml"/>
+
+  <BehaviorTree ID="PatrolHomeStop">
+    <Switch3 variable="{mode}" case_1="PATROL" case_2="HOME" case_3="STOP">
+
+      <SubTree ID="BatteryPatrol" _autoremap="true"/>
+
+      <Sequence name="home">
+        <SubTree ID="GoHome" _autoremap="true"/>
+        <!-- mission_bt_node restarts a finished tree, which would request home
+             again. Stay RUNNING instead. -->
+        <KeepRunningUntilFailure name="stay_home">
+          <AlwaysSuccess/>
+        </KeepRunningUntilFailure>
+      </Sequence>
+
+      <Sequence name="stop">
+        <CommanderSwitchMode name="stop" mode="stop"
+                             service="{switch_mode_service}" timeout="{switch_mode_timeout}"/>
+        <KeepRunningUntilFailure name="stay_stopped">
+          <AlwaysSuccess/>
+        </KeepRunningUntilFailure>
+      </Sequence>
+
+      <!-- 'modes' in the YAML lists a mode this tree has no branch for. -->
+      <AlwaysFailure name="unknown_mode"/>
+
+    </Switch3>
+  </BehaviorTree>
+
+</root>

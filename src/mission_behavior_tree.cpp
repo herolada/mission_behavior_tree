@@ -1,6 +1,7 @@
 #include "mission_behavior_tree/mission_behavior_tree.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <filesystem>
 #include <set>
@@ -45,6 +46,22 @@ T read(
   return it->template get_value<T>();
 }
 
+bool equalIgnoringCase(const std::string & a, const std::string & b)
+{
+  return a.size() == b.size() &&
+         std::equal(a.begin(), a.end(), b.begin(), [](unsigned char x, unsigned char y) {
+             return std::tolower(x) == std::tolower(y);
+           });
+}
+
+// The entry of `modes` that `name` names, ignoring case.
+std::vector<std::string>::const_iterator findMode(
+  const std::vector<std::string> & modes, const std::string & name)
+{
+  return std::find_if(modes.begin(), modes.end(),
+           [&name](const std::string & mode) {return equalIgnoringCase(mode, name);});
+}
+
 std::string inPackageShare(const std::string & subdirectory, const std::string & file)
 {
   if (std::filesystem::path(file).is_absolute()) return file;
@@ -57,6 +74,10 @@ std::string inPackageShare(const std::string & subdirectory, const std::string &
 MissionBehaviorTree::MissionBehaviorTree(const rclcpp::NodeOptions & options)
 : node_(std::make_shared<rclcpp::Node>("mission_behavior_tree", options))
 {
+  // Before the first loadMission, which publishes the initial mode.
+  mode_publisher_ = node_->create_publisher<std_msgs::msg::String>(
+    "~/mode", rclcpp::QoS(1).transient_local());
+
   std::vector<rclcpp::Parameter> parameters;
   for (const auto & [name, value] :
     node_->get_node_parameters_interface()->get_parameter_overrides())
@@ -69,6 +90,10 @@ MissionBehaviorTree::MissionBehaviorTree(const rclcpp::NodeOptions & options)
     "~/load_mission",
     [this](const LoadMission::Request::SharedPtr request,
     LoadMission::Response::SharedPtr response) {onLoadMission(request, response);});
+  set_mode_service_ = node_->create_service<SetMode>(
+    "~/set_mode",
+    [this](const SetMode::Request::SharedPtr request,
+    SetMode::Response::SharedPtr response) {onSetMode(request, response);});
 }
 
 void MissionBehaviorTree::shutdown()
@@ -86,6 +111,8 @@ void MissionBehaviorTree::loadMission(const std::vector<rclcpp::Parameter> & par
   const auto retry_delay_sec = read(parameters, "retry_delay_sec", 5.0);
   const auto groot_port = read<int64_t>(parameters, "groot_port", 1667);
   const auto bt_plugins = read(parameters, "bt_plugins", std::vector<std::string>{});
+  const auto modes = read(parameters, "modes", std::vector<std::string>{});
+  auto initial_mode = read<std::string>(parameters, "initial_mode", "");
 
   if (tree_file.empty()) {
     throw std::runtime_error("Parameter 'tree_file' is not set.");
@@ -93,10 +120,36 @@ void MissionBehaviorTree::loadMission(const std::vector<rclcpp::Parameter> & par
   if (tick_rate_hz <= 0.0) {
     throw std::runtime_error("Parameter 'tick_rate_hz' must be positive.");
   }
+  for (auto it = modes.begin(); it != modes.end(); ++it) {
+    if (it->empty()) {
+      throw std::runtime_error("Parameter 'modes' contains an empty mode.");
+    }
+    if (findMode(modes, *it) != it) {  // modes are matched ignoring case
+      throw std::runtime_error("Parameter 'modes' lists '" + *it + "' twice.");
+    }
+  }
+  if (modes.empty() && !initial_mode.empty()) {
+    throw std::runtime_error("Parameter 'initial_mode' is set, but 'modes' is not.");
+  }
+  if (!modes.empty()) {
+    if (initial_mode.empty()) {
+      initial_mode = modes.front();
+    }
+    const auto it = findMode(modes, initial_mode);
+    if (it == modes.end()) {
+      throw std::runtime_error(
+        "Parameter 'initial_mode' ('" + initial_mode + "') is not one of 'modes'.");
+    }
+    initial_mode = *it;  // spelled as in 'modes', which is what the tree matches
+  }
 
   auto blackboard = BT::Blackboard::create();
   loadBlackboardParameters(parameters, *blackboard, node_->get_logger());
-  blackboard->set("node", node_);  // after the parameters, so it cannot be overridden
+  // After the parameters, so they cannot be overridden.
+  blackboard->set("node", node_);
+  if (!modes.empty()) {
+    blackboard->set("mode", initial_mode);
+  }
 
   BT::BehaviorTreeFactory factory;
   for (const auto & plugin : bt_plugins) {
@@ -121,6 +174,9 @@ void MissionBehaviorTree::loadMission(const std::vector<rclcpp::Parameter> & par
   retry_delay_sec_ = retry_delay_sec;
   retry_at_.reset();
   last_status_ = BT::NodeStatus::IDLE;
+  modes_ = modes;
+  mode_ = initial_mode;
+  publishMode();
 
   if (groot_port > 0) {
     try {
@@ -137,6 +193,8 @@ void MissionBehaviorTree::loadMission(const std::vector<rclcpp::Parameter> & par
     rclcpp::Parameter("retry_delay_sec", retry_delay_sec),
     rclcpp::Parameter("groot_port", groot_port),
     rclcpp::Parameter("bt_plugins", bt_plugins),
+    rclcpp::Parameter("modes", modes),
+    rclcpp::Parameter("initial_mode", initial_mode),
   };
   std::copy_if(parameters.begin(), parameters.end(), std::back_inserter(effective),
     [](const rclcpp::Parameter & p) {return isBlackboardParameter(p.get_name());});
@@ -169,6 +227,50 @@ void MissionBehaviorTree::onLoadMission(
   }
 }
 
+void MissionBehaviorTree::onSetMode(
+  const SetMode::Request::SharedPtr request, SetMode::Response::SharedPtr response)
+{
+  // Ignoring case, but stored spelled as in 'modes', which is what the tree matches.
+  const auto it = findMode(modes_, request->mode);
+  const std::string mode = it == modes_.end() ? request->mode : *it;
+  if (modes_.empty()) {
+    response->success = false;
+    response->message = "The running mission has no modes.";
+  } else if (it == modes_.end()) {
+    std::string known;
+    for (const auto & m : modes_) known += (known.empty() ? "" : ", ") + m;
+    response->success = false;
+    response->message = "Unknown mode '" + mode + "', expected one of: " + known + ".";
+  } else if (mode == mode_) {
+    response->success = true;
+    response->message = "Already in mode " + mode + ".";
+  } else {
+    // The tree sees it on its next tick; the switch there halts the old branch.
+    tree_.rootBlackboard()->set("mode", mode);
+    response->success = true;
+    response->message = "Mode " + mode_ + " → " + mode + ".";
+    mode_ = mode;
+    // A tree waiting out retry_delay after a failure picks the new mode up now
+    // (e.g. STOP while a failing patrol is being retried).
+    retry_at_.reset();
+    publishMode();
+  }
+
+  if (response->success) {
+    RCLCPP_INFO(node_->get_logger(), "%s", response->message.c_str());
+  } else {
+    RCLCPP_WARN(node_->get_logger(), "Cannot set mode: %s", response->message.c_str());
+  }
+}
+
+// Empty when the mission has no modes, so a latched old value does not linger.
+void MissionBehaviorTree::publishMode()
+{
+  std_msgs::msg::String msg;
+  msg.data = mode_;
+  mode_publisher_->publish(msg);
+}
+
 void MissionBehaviorTree::replaceNodeParameters(const std::vector<rclcpp::Parameter> & parameters)
 {
   for (const auto & name : mission_parameters_) {
@@ -195,7 +297,8 @@ void MissionBehaviorTree::warnAboutUnknownParameters(
   const std::vector<rclcpp::Parameter> & parameters)
 {
   static const std::set<std::string> known{
-    "tree_file", "tick_rate_hz", "retry_delay_sec", "groot_port", "bt_plugins", "use_sim_time"};
+    "tree_file", "tick_rate_hz", "retry_delay_sec", "groot_port", "bt_plugins", "modes",
+    "initial_mode", "use_sim_time"};
   for (const auto & parameter : parameters) {
     const auto & name = parameter.get_name();
     if (known.count(name) || isBlackboardParameter(name) || name.rfind("qos_overrides.", 0) == 0) {

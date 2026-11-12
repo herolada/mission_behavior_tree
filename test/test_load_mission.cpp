@@ -1,5 +1,6 @@
-// ~/load_mission on a running MissionBehaviorTree, with the real mission configs
-// and trees (paths and ports rewritten) and a fake crl_commander service.
+// ~/load_mission and ~/set_mode on a running MissionBehaviorTree, with the real
+// mission configs and trees (paths and ports rewritten) and a fake
+// crl_commander service.
 
 #include <gtest/gtest.h>
 #include <unistd.h>
@@ -21,14 +22,17 @@
 #include <behaviortree_cpp/loggers/groot2_publisher.h>
 #include <crl_commander_interfaces/srv/switch_mode.hpp>
 #include <rclcpp/rclcpp.hpp>
+#include <std_msgs/msg/string.hpp>
 
 #include "mission_behavior_tree/mission_behavior_tree.hpp"
 #include "mission_behavior_tree/srv/load_mission.hpp"
+#include "mission_behavior_tree/srv/set_mode.hpp"
 
 namespace
 {
 
 using LoadMission = mission_behavior_tree::srv::LoadMission;
+using SetMode = mission_behavior_tree::srv::SetMode;
 using SwitchMode = crl_commander_interfaces::srv::SwitchMode;
 namespace fs = std::filesystem;
 
@@ -62,6 +66,13 @@ protected:
           response->success = true;
         });
     load_mission_ = helper_->create_client<LoadMission>("/mission_behavior_tree/load_mission");
+    set_mode_ = helper_->create_client<SetMode>("/mission_behavior_tree/set_mode");
+    mode_subscription_ = helper_->create_subscription<std_msgs::msg::String>(
+      "/mission_behavior_tree/mode", rclcpp::QoS(1).transient_local(),
+      [this](const std_msgs::msg::String & msg) {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        published_modes_.push_back(msg.data);
+      });
     executor_.add_node(helper_);
     spinner_ = std::thread([this]() {executor_.spin();});
   }
@@ -128,6 +139,47 @@ protected:
     return future.get();
   }
 
+  SetMode::Response::SharedPtr setMode(const std::string & mode)
+  {
+    EXPECT_TRUE(set_mode_->wait_for_service(std::chrono::seconds(5)));
+    auto request = std::make_shared<SetMode::Request>();
+    request->mode = mode;
+    auto future = set_mode_->async_send_request(request);
+    EXPECT_EQ(future.wait_for(std::chrono::seconds(10)), std::future_status::ready);
+    return future.get();
+  }
+
+  // Modes A and B, each requesting its lowercase name from the commander once.
+  std::string abTree(const std::string & name)
+  {
+    const std::string branch =
+      R"(<Sequence><CommanderSwitchMode mode="%" service="/test_load_mission/switch_mode"/>
+           <KeepRunningUntilFailure><AlwaysSuccess/></KeepRunningUntilFailure></Sequence>)";
+    return write(name,
+      R"(<root BTCPP_format="4" main_tree_to_execute="T"><BehaviorTree ID="T">
+           <Switch2 variable="{mode}" case_1="A" case_2="B">)" +
+      std::regex_replace(branch, std::regex("%"), "a") +
+      std::regex_replace(branch, std::regex("%"), "b") +
+      R"(<AlwaysFailure/></Switch2></BehaviorTree></root>)");
+  }
+
+  // The last value seen on ~/mode, once it equals `expected` (or the last one
+  // seen when that does not happen in time).
+  std::string waitForPublishedMode(const std::string & expected, double max_sec = 5.0)
+  {
+    const auto deadline = std::chrono::steady_clock::now() +
+      std::chrono::duration<double>(max_sec);
+    while (std::chrono::steady_clock::now() < deadline) {
+      {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        if (!published_modes_.empty() && published_modes_.back() == expected) return expected;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    const std::lock_guard<std::mutex> lock(mutex_);
+    return published_modes_.empty() ? "<nothing>" : published_modes_.back();
+  }
+
   std::vector<std::string> modes()
   {
     const std::lock_guard<std::mutex> lock(mutex_);
@@ -150,11 +202,14 @@ protected:
   rclcpp::Node::SharedPtr helper_;
   rclcpp::Service<SwitchMode>::SharedPtr switch_mode_;
   rclcpp::Client<LoadMission>::SharedPtr load_mission_;
+  rclcpp::Client<SetMode>::SharedPtr set_mode_;
+  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr mode_subscription_;
   rclcpp::executors::SingleThreadedExecutor executor_;
   std::thread spinner_;
   std::unique_ptr<mission_behavior_tree::MissionBehaviorTree> mission_;
   std::mutex mutex_;
-  std::vector<std::string> modes_;
+  std::vector<std::string> modes_;  // requested from the fake commander
+  std::vector<std::string> published_modes_;  // seen on ~/mode
 };
 
 }  // namespace
@@ -205,6 +260,11 @@ TEST_F(LoadMissionTest, BadConfigsLeaveTheRunningMissionAlone)
     write("missing_tree.yaml", config((dir_ / "missing.xml").string())),
     write("unknown_node.yaml", config(unknown_node)),
     write("bad_rate.yaml", config(first_tree, "    tick_rate_hz: 0.0\n")),
+    write("bad_initial_mode.yaml",
+      config(first_tree, "    modes: [A, B]\n    initial_mode: C\n")),
+    write("initial_mode_only.yaml", config(first_tree, "    initial_mode: A\n")),
+    write("empty_mode.yaml", config(first_tree, "    modes: [A, '']\n")),
+    write("same_mode_twice.yaml", config(first_tree, "    modes: [A, B, a]\n")),
   };
   for (const auto & file : bad_files) {
     const auto response = load(file);
@@ -280,4 +340,132 @@ TEST_F(LoadMissionTest, GrootPortIsReusedByTheNextMission)
     R"(<root BTCPP_format="4" main_tree_to_execute="T"><BehaviorTree ID="T">
          <AlwaysSuccess/></BehaviorTree></root>)");
   EXPECT_ANY_THROW(BT::Groot2Publisher(tree, kPort));
+}
+
+TEST_F(LoadMissionTest, SetModeSwitchesTheTreeAndPublishesTheMode)
+{
+  startMission({
+    rclcpp::Parameter("tree_file", abTree("ab.xml")),
+    rclcpp::Parameter("groot_port", 0),
+    rclcpp::Parameter("modes", std::vector<std::string>{"A", "B"}),
+  });
+  ASSERT_TRUE(waitForModes(1));
+  EXPECT_EQ(modes(), std::vector<std::string>{"a"}) << "initial_mode defaults to the first";
+  EXPECT_EQ(waitForPublishedMode("A"), "A");
+  EXPECT_EQ(node().get_parameter("initial_mode").as_string(), "A");
+
+  auto response = setMode("B");
+  EXPECT_TRUE(response->success) << response->message;
+  ASSERT_TRUE(waitForModes(2));
+  EXPECT_EQ(waitForPublishedMode("B"), "B");
+
+  response = setMode("B");
+  EXPECT_TRUE(response->success) << "setting the current mode again is fine";
+
+  for (const auto & bad : {"C", "AA", ""}) {
+    response = setMode(bad);
+    EXPECT_FALSE(response->success) << bad;
+    EXPECT_NE(response->message.find("A, B"), std::string::npos) << response->message;
+  }
+
+  // Case does not matter; the tree gets the spelling from 'modes'.
+  response = setMode("a");
+  EXPECT_TRUE(response->success) << response->message;
+  ASSERT_TRUE(waitForModes(3));
+  EXPECT_EQ(waitForPublishedMode("A"), "A");
+  EXPECT_TRUE(setMode("A")->success);
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(300));
+  EXPECT_EQ(modes(), (std::vector<std::string>{"a", "b", "a"}))
+    << "each mode entered once, nothing for the rejected or repeated ones";
+}
+
+TEST_F(LoadMissionTest, SetModeIsRejectedWithoutModes)
+{
+  startMission({
+    rclcpp::Parameter("tree_file", modeTree("first.xml", "first")),
+    rclcpp::Parameter("groot_port", 0),
+  });
+  ASSERT_TRUE(waitForModes(1));
+  EXPECT_EQ(waitForPublishedMode(""), "");
+
+  const auto response = setMode("A");
+  EXPECT_FALSE(response->success);
+  EXPECT_FALSE(response->message.empty());
+}
+
+TEST_F(LoadMissionTest, LoadingAMissionStartsItInItsInitialMode)
+{
+  const auto tree = abTree("ab.xml");
+  startMission({
+    rclcpp::Parameter("tree_file", tree),
+    rclcpp::Parameter("groot_port", 0),
+    rclcpp::Parameter("modes", std::vector<std::string>{"A", "B"}),
+    rclcpp::Parameter("initial_mode", "b"),
+  });
+  ASSERT_TRUE(waitForModes(1));
+  EXPECT_EQ(waitForPublishedMode("B"), "B");
+  EXPECT_EQ(node().get_parameter("initial_mode").as_string(), "B");
+  ASSERT_TRUE(setMode("A")->success);
+  ASSERT_TRUE(waitForModes(2));
+
+  const auto response = load(write("again.yaml", config(tree, "    modes: [A, B]\n")));
+  ASSERT_TRUE(response->success) << response->message;
+  ASSERT_TRUE(waitForModes(3));
+  EXPECT_EQ(modes(), (std::vector<std::string>{"b", "a", "a"}));
+  EXPECT_EQ(waitForPublishedMode("A"), "A");
+
+  // Without modes, ~/mode goes empty and set_mode stops working.
+  ASSERT_TRUE(load(write("plain.yaml", config(modeTree("plain.xml", "plain"))))->success);
+  EXPECT_EQ(waitForPublishedMode(""), "");
+  EXPECT_FALSE(setMode("B")->success);
+}
+
+TEST_F(LoadMissionTest, NewModeCutsTheRetryDelayShort)
+{
+  // Mode A fails right away; B must run without waiting out the 60 s delay.
+  const auto tree = write("fail_a.xml",
+      R"(<root BTCPP_format="4" main_tree_to_execute="T"><BehaviorTree ID="T">
+           <Switch2 variable="{mode}" case_1="A" case_2="B">
+             <AlwaysFailure/>
+             <Sequence><CommanderSwitchMode mode="b" service="/test_load_mission/switch_mode"/>
+               <KeepRunningUntilFailure><AlwaysSuccess/></KeepRunningUntilFailure></Sequence>
+             <AlwaysFailure/>
+           </Switch2></BehaviorTree></root>)");
+  startMission({
+    rclcpp::Parameter("tree_file", tree),
+    rclcpp::Parameter("groot_port", 0),
+    rclcpp::Parameter("retry_delay_sec", 60.0),
+    rclcpp::Parameter("modes", std::vector<std::string>{"A", "B"}),
+  });
+  std::this_thread::sleep_for(std::chrono::milliseconds(300));  // A has failed by now
+
+  ASSERT_TRUE(setMode("B")->success);
+  EXPECT_TRUE(waitForModes(1, 2.0));
+}
+
+TEST_F(LoadMissionTest, PatrolHomeStopMissionStopsOnRequest)
+{
+  startMission({
+    rclcpp::Parameter("tree_file", modeTree("first.xml", "first")),
+    rclcpp::Parameter("groot_port", 0),
+  });
+  ASSERT_TRUE(waitForModes(1));
+
+  const auto response = load(realConfig(PATROL_HOME_STOP_CONFIG, PATROL_HOME_STOP_TREE_XML));
+  ASSERT_TRUE(response->success) << response->message;
+  EXPECT_EQ(waitForPublishedMode("PATROL"), "PATROL");
+
+  // PATROL waits for the battery, which nobody publishes here: no request yet.
+  std::this_thread::sleep_for(std::chrono::milliseconds(300));
+  EXPECT_EQ(modes(), std::vector<std::string>{"first"});
+
+  ASSERT_TRUE(setMode("STOP")->success);
+  ASSERT_TRUE(waitForModes(2));
+  std::this_thread::sleep_for(std::chrono::seconds(1));  // ~10 ticks
+  EXPECT_EQ(modes(), (std::vector<std::string>{"first", "stop"}));
+
+  EXPECT_TRUE(setMode("home")->success);
+  EXPECT_EQ(waitForPublishedMode("HOME"), "HOME");
+  EXPECT_TRUE(setMode("PATROL")->success);
 }

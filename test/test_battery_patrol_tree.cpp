@@ -6,7 +6,6 @@
 
 #include <gtest/gtest.h>
 
-#include <map>
 #include <string>
 #include <vector>
 
@@ -17,76 +16,11 @@
 #include <rclcpp/rclcpp.hpp>
 
 #include "mission_behavior_tree/blackboard_parameters.hpp"
-#include "mission_behavior_tree/operator_request_action.hpp"
-#include "mission_behavior_tree/wait_for_message_action.hpp"
+
+#include "fake_bt_nodes.hpp"
 
 namespace
 {
-
-double g_battery = 100.0;
-std::vector<std::string> g_sent;    // goal of every request sent, in order
-std::vector<std::string> g_halted;  // goal of every request halted, in order
-std::map<std::string, BT::NodeStatus> g_result;  // onRunning() result per goal
-// Latest request per goal, as read from the ports.
-std::map<std::string, commander_operator_interfaces::msg::OperatorRequest> g_request;
-
-class FakeBatteryLow : public BT::ConditionNode
-{
-public:
-  FakeBatteryLow(const std::string & name, const BT::NodeConfig & config)
-  : BT::ConditionNode(name, config) {}
-
-  static BT::PortsList providedPorts()
-  {
-    return {
-      BT::InputPort<double>("min_battery"),
-      BT::InputPort<std::string>("battery_topic"),
-      BT::InputPort<bool>("is_voltage"),
-    };
-  }
-
-  BT::NodeStatus tick() override
-  {
-    return g_battery <= getInput<double>("min_battery").value() ?
-           BT::NodeStatus::SUCCESS : BT::NodeStatus::FAILURE;
-  }
-};
-
-class FakeOperatorRequest : public BT::StatefulActionNode
-{
-public:
-  FakeOperatorRequest(const std::string & name, const BT::NodeConfig & config)
-  : BT::StatefulActionNode(name, config) {}
-
-  static BT::PortsList providedPorts()
-  {
-    return mission_behavior_tree::OperatorRequestAction::providedPorts();
-  }
-
-  BT::NodeStatus onStart() override
-  {
-    goal_ = getInput<std::string>("goal").value();
-    g_sent.push_back(goal_);
-    auto & request = g_request[goal_];
-    request.goal = goal_;
-    request.route = getInput<bool>("route").value();
-    request.wgs = getInput<bool>("wgs").value();
-    request.route_goal_point = getInput<std::string>("route_goal_point").value();
-    request.loop = getInput<bool>("loop").value();
-    return BT::NodeStatus::RUNNING;
-  }
-
-  BT::NodeStatus onRunning() override
-  {
-    auto it = g_result.find(goal_);
-    return it == g_result.end() ? BT::NodeStatus::RUNNING : it->second;
-  }
-
-  void onHalted() override {g_halted.push_back(goal_);}
-
-private:
-  std::string goal_;
-};
 
 class BatteryPatrolTree : public ::testing::Test
 {
@@ -98,17 +32,8 @@ protected:
 
   void SetUp() override
   {
-    g_battery = 100.0;
-    g_sent.clear();
-    g_halted.clear();
-    g_result.clear();
-    g_request.clear();
-
-    factory_.registerNodeType<FakeBatteryLow>("IsBatteryLow");
-    factory_.registerNodeType<FakeOperatorRequest>("OperatorRequest");
-    factory_.registerSimpleAction("WaitForMessage",
-      [](BT::TreeNode &) {return BT::NodeStatus::SUCCESS;},
-      mission_behavior_tree::WaitForMessageAction::providedPorts());
+    fake::reset();
+    fake::registerNodes(factory_);
 
     // Same node name as mission_bt_node, so the YAML applies.
     const char * node_name = "/mission_behavior_tree";
@@ -138,84 +63,84 @@ using Goals = std::vector<std::string>;
 
 TEST_F(BatteryPatrolTree, PatrolsOnceWithFullBattery)
 {
-  g_battery = 50.0;
+  fake::battery = 50.0;
   EXPECT_EQ(tickTimes(5), BT::NodeStatus::RUNNING);
-  EXPECT_EQ(g_sent, Goals{"patrol"});
+  EXPECT_EQ(fake::sent, Goals{"patrol"});
 }
 
 TEST_F(BatteryPatrolTree, LowBatteryHaltsPatrolAndGoesHomeOnce)
 {
-  g_battery = 50.0;
+  fake::battery = 50.0;
   tickTimes(3);
-  g_battery = 15.0;
+  fake::battery = 15.0;
   EXPECT_EQ(tickTimes(5), BT::NodeStatus::RUNNING);
-  EXPECT_EQ(g_sent, (Goals{"patrol", "home"}));
-  EXPECT_EQ(g_halted, Goals{"patrol"});
+  EXPECT_EQ(fake::sent, (Goals{"patrol", "home"}));
+  EXPECT_EQ(fake::halted, Goals{"patrol"});
 }
 
 TEST_F(BatteryPatrolTree, StaysHomeUntilChargedThenResumesPatrol)
 {
-  g_battery = 15.0;
+  fake::battery = 15.0;
   tickTimes(3);
-  g_result["home"] = BT::NodeStatus::SUCCESS;  // arrived
+  fake::result["home"] = BT::NodeStatus::SUCCESS;  // arrived
   tickTimes(3);
 
   // Above battery_low but below battery_charged: the latch keeps it home.
-  g_battery = 50.0;
+  fake::battery = 50.0;
   EXPECT_EQ(tickTimes(5), BT::NodeStatus::RUNNING);
-  EXPECT_EQ(g_sent, Goals{"home"});
+  EXPECT_EQ(fake::sent, Goals{"home"});
 
-  g_battery = 95.0;
+  fake::battery = 95.0;
   EXPECT_EQ(tickTimes(3), BT::NodeStatus::RUNNING);
-  EXPECT_EQ(g_sent, (Goals{"home", "patrol"}));
+  EXPECT_EQ(fake::sent, (Goals{"home", "patrol"}));
 
   // Latch released: dropping back below battery_charged keeps patrolling.
-  g_battery = 50.0;
+  fake::battery = 50.0;
   tickTimes(3);
-  EXPECT_EQ(g_sent, (Goals{"home", "patrol"}));
+  EXPECT_EQ(fake::sent, (Goals{"home", "patrol"}));
 }
 
 TEST_F(BatteryPatrolTree, FailingToGoHomeFailsTheTreeInsteadOfPatrolling)
 {
-  g_battery = 15.0;
+  fake::battery = 15.0;
   tickTimes(2);
-  g_result["home"] = BT::NodeStatus::FAILURE;
+  fake::result["home"] = BT::NodeStatus::FAILURE;
   EXPECT_EQ(tickTimes(1), BT::NodeStatus::FAILURE);
-  EXPECT_EQ(g_sent, Goals{"home"});
+  EXPECT_EQ(fake::sent, Goals{"home"});
 }
 
 TEST_F(BatteryPatrolTree, RestartAfterFailureWhileRechargingKeepsGoingHome)
 {
   // Low → home; on the way the battery reads a little higher, then the home
   // request fails. The latch survives the restart, so it heads home again.
-  g_battery = 15.0;
+  fake::battery = 15.0;
   tickTimes(2);
-  g_battery = 50.0;
-  g_result["home"] = BT::NodeStatus::FAILURE;
+  fake::battery = 50.0;
+  fake::result["home"] = BT::NodeStatus::FAILURE;
   EXPECT_EQ(tickTimes(1), BT::NodeStatus::FAILURE);
   tree_.haltTree();
 
-  g_result.erase("home");
+  fake::result.erase("home");
   EXPECT_EQ(tickTimes(2), BT::NodeStatus::RUNNING);
-  EXPECT_EQ(g_sent, (Goals{"home", "home"}));
+  EXPECT_EQ(fake::sent, (Goals{"home", "home"}));
 }
 
 TEST_F(BatteryPatrolTree, LoopsThePatrolAndGoesHomeAlongWgsRoute)
 {
-  g_battery = 100.0;
+  fake::battery = 100.0;
   tickTimes(3);
-  g_battery = 15.0;
+  fake::battery = 15.0;
   tickTimes(3);
-  ASSERT_EQ(g_sent, (Goals{"patrol", "home"}));
+  ASSERT_EQ(fake::sent, (Goals{"patrol", "home"}));
 
-  EXPECT_TRUE(g_request["patrol"].route);
-  EXPECT_TRUE(g_request["patrol"].loop);
-  EXPECT_EQ(g_request["patrol"].route_goal_point, "");
+  EXPECT_TRUE(fake::request["patrol"].route);
+  EXPECT_TRUE(fake::request["patrol"].loop);
+  EXPECT_EQ(fake::request["patrol"].route_goal_point, "");
 
-  EXPECT_TRUE(g_request["home"].route);
-  EXPECT_TRUE(g_request["home"].wgs);
-  EXPECT_FALSE(g_request["home"].loop);
-  EXPECT_EQ(g_request["home"].route_goal_point, "home");
+  EXPECT_TRUE(fake::request["home"].route);
+  EXPECT_TRUE(fake::request["home"].wgs);
+  EXPECT_FALSE(fake::request["home"].loop);
+  EXPECT_EQ(fake::request["home"].route_goal_point, "home");
 }
 
 TEST(Nav2Plugins, IsBatteryLowLoadsWithThePortsTheTreeUses)

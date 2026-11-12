@@ -1,0 +1,9 @@
+# Switches the mode of the running mission, e.g. PATROL / HOME / STOP. The
+# mission lists its modes in the 'modes' parameter, and its tree reads the
+# current one from the blackboard entry 'mode' (e.g. with a Switch node).
+
+# One of the mission's 'modes', in any case (stop, STOP, Stop, ...).
+string mode
+---
+bool success
+string message

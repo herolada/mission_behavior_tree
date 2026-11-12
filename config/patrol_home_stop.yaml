@@ -1,0 +1,38 @@
+mission_behavior_tree:
+  ros__parameters:
+    # ── Runner ───────────────────────────────────────────────────────────────
+    tree_file: patrol_home_stop.xml   # relative to share/mission_behavior_tree/behavior_trees, or absolute
+    tick_rate_hz: 10.0
+    retry_delay_sec: 5.0        # wait before restarting a failed tree
+    groot_port: 1667            # Groot2 monitoring, 0 disables
+    bt_plugins: ["nav2_is_battery_low_condition_bt_node"]
+
+    # Operator-selectable modes, switched with ~/set_mode. The tree reads the
+    # current one from the blackboard entry 'mode'.
+    modes: ["PATROL", "HOME", "STOP"]
+    initial_mode: PATROL
+
+    # ── Mission: everything below is copied into the blackboard ─────────────
+    # bool / double / string keep their type; integers and arrays are stored as
+    # strings, which BT.CPP parses to whatever type the port wants.
+    blackboard:
+      battery_topic: /battery_status   # sensor_msgs/BatteryState
+      battery_is_voltage: false        # false: compare .percentage (0..100), true: .voltage [V]
+      battery_low: 25                 # go home at or below this
+      battery_charged: 90             # resume patrolling above this
+      recharging: false                # latch used by NeedsCharging, must start false
+
+      # commander_operator waypoint / route names (see its data/ folder)
+      home_route: home
+      home_route_goal_point: home   # waypoint of home_route to drive to
+      home_wgs: true
+      patrol_route: patrol
+      patrol_wgs: true
+
+      operator_request_service: /commander_operator/operator_request
+      commander_state_topic: /crl_commander/state
+      accept_timeout: 10.0   # [s] for a request to be taken up by crl_commander
+      stuck_timeout: 30.0    # [s] of continuous 'stuck' before a request fails
+
+      switch_mode_service: /crl_commander/switch_mode
+      switch_mode_timeout: 5.0   # [s] for crl_commander to answer
