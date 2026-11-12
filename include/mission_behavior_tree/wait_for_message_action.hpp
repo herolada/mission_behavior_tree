@@ -1,5 +1,6 @@
 #pragma once
 
+#include <memory>
 #include <string>
 
 #include <behaviortree_cpp/action_node.h>
@@ -47,7 +48,7 @@ private:
   std::string topic_;
   double timeout_{0.0};
   rclcpp::Time started_;
-  bool received_{false};
+  std::shared_ptr<bool> received_;  // shared with the subscription, set in onStart
 };
 
 }  // namespace mission_behavior_tree

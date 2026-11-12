@@ -1,0 +1,8 @@
+# Replaces the running mission (tree and all parameters) with the one in this
+# YAML file, without restarting the node. On failure the old mission keeps running.
+
+# Relative to share/mission_behavior_tree/config, or absolute. e.g. stop.yaml
+string config_file
+---
+bool success
+string message

@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<!--
+  Stop the robot and stay stopped until another mission is loaded.
+
+  Blackboard entries (from the blackboard: section of config/stop.yaml):
+    switch_mode_service, switch_mode_timeout.
+-->
+<root BTCPP_format="4" main_tree_to_execute="Stop">
+
+  <BehaviorTree ID="Stop">
+    <Sequence>
+      <CommanderSwitchMode name="stop" mode="stop"
+                           service="{switch_mode_service}" timeout="{switch_mode_timeout}"/>
+      <!-- mission_bt_node restarts a finished tree, which would request the stop
+           on every tick. Stay RUNNING instead; a failed request is still retried
+           after retry_delay. -->
+      <KeepRunningUntilFailure name="stay_stopped">
+        <AlwaysSuccess/>
+      </KeepRunningUntilFailure>
+    </Sequence>
+  </BehaviorTree>
+
+</root>

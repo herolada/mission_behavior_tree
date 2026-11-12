@@ -15,9 +15,11 @@ OperatorRequestAction::OperatorRequestAction(
   const std::string state_topic = getInput<std::string>("state_topic").value();
 
   client_ = node_->create_client<SendOperatorRequest>(service);
+  // Not capturing `this`: when ~/load_mission destroys this tree, the executor
+  // can still deliver a message it had already picked up.
   state_sub_ = node_->create_subscription<CommanderState>(
     state_topic, rclcpp::QoS(10),
-    [this](CommanderState::ConstSharedPtr msg) {latest_state_ = *msg;});
+    [latest_state = latest_state_](CommanderState::ConstSharedPtr msg) {*latest_state = *msg;});
 }
 
 double OperatorRequestAction::nowSec() const
@@ -72,11 +74,12 @@ BT::NodeStatus OperatorRequestAction::onStart()
 BT::NodeStatus OperatorRequestAction::onRunning()
 {
   const double now = nowSec();
+  const auto & latest_state = *latest_state_;
 
   if (!sent_) {
-    if (!latest_state_ || !client_->service_is_ready()) {
+    if (!latest_state || !client_->service_is_ready()) {
       if (monitor_.acceptTimedOut(now)) {
-        return fail(!latest_state_ ?
+        return fail(!latest_state ?
           "no CommanderState received on '" + std::string(state_sub_->get_topic_name()) + "'" :
           "service '" + std::string(client_->get_service_name()) + "' not available");
       }
@@ -87,11 +90,11 @@ BT::NodeStatus OperatorRequestAction::onRunning()
 
     auto req = std::make_shared<SendOperatorRequest::Request>();
     req->request = request_;
-    monitor_.requestSent(latest_state_->goal_id);
+    monitor_.requestSent(latest_state->goal_id);
     pending_response_.emplace(client_->async_send_request(req));
     sent_ = true;
     RCLCPP_INFO(node_->get_logger(), "[%s] Sent %s (commander goal_id %lu).",
-      name().c_str(), description_.c_str(), static_cast<unsigned long>(latest_state_->goal_id));
+      name().c_str(), description_.c_str(), static_cast<unsigned long>(latest_state->goal_id));
     return BT::NodeStatus::RUNNING;
   }
 
@@ -110,10 +113,10 @@ BT::NodeStatus OperatorRequestAction::onRunning()
   }
 
   const bool was_taken_up = monitor_.takenUp();
-  const auto outcome = monitor_.update(latest_state_->state, latest_state_->goal_id, now);
+  const auto outcome = monitor_.update(latest_state->state, latest_state->goal_id, now);
   if (!was_taken_up && monitor_.takenUp()) {
     RCLCPP_INFO(node_->get_logger(), "[%s] %s taken up by the commander (goal_id %lu).",
-      name().c_str(), description_.c_str(), static_cast<unsigned long>(latest_state_->goal_id));
+      name().c_str(), description_.c_str(), static_cast<unsigned long>(latest_state->goal_id));
   }
 
   switch (outcome) {

@@ -24,11 +24,13 @@ BT::NodeStatus WaitForMessageAction::onStart()
   rclcpp::QoS qos = rclcpp::SystemDefaultsQoS();
   if (getInput<bool>("best_effort").value()) qos.best_effort();
 
-  received_ = false;
+  received_ = std::make_shared<bool>(false);
   started_ = node_->now();
   try {
+    // Not capturing `this`: when ~/load_mission destroys this tree, the executor
+    // can still deliver a message it had already picked up.
     sub_ = node_->create_generic_subscription(topic_, *type, qos,
-      [this](std::shared_ptr<const rclcpp::SerializedMessage>) {received_ = true;});
+      [received = received_](std::shared_ptr<const rclcpp::SerializedMessage>) {*received = true;});
   } catch (const std::exception & ex) {
     RCLCPP_ERROR(node_->get_logger(), "[%s] Cannot subscribe to '%s' [%s]: %s",
       name().c_str(), topic_.c_str(), type->c_str(), ex.what());
@@ -39,7 +41,7 @@ BT::NodeStatus WaitForMessageAction::onStart()
 
 BT::NodeStatus WaitForMessageAction::onRunning()
 {
-  if (received_) {
+  if (*received_) {
     RCLCPP_INFO(node_->get_logger(), "[%s] Got a message on '%s'.", name().c_str(), topic_.c_str());
     return finish(BT::NodeStatus::SUCCESS);
   }

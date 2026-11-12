@@ -1,5 +1,6 @@
 #pragma once
 
+#include <memory>
 #include <optional>
 #include <string>
 
@@ -81,7 +82,8 @@ private:
   rclcpp::Node::SharedPtr node_;
   rclcpp::Client<SendOperatorRequest>::SharedPtr client_;
   rclcpp::Subscription<CommanderState>::SharedPtr state_sub_;
-  std::optional<CommanderState> latest_state_;
+  std::shared_ptr<std::optional<CommanderState>> latest_state_{
+    std::make_shared<std::optional<CommanderState>>()};  // shared with the subscription
 
   // Per entry (read in onStart)
   commander_operator_interfaces::msg::OperatorRequest request_;

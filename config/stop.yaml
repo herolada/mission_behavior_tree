@@ -1,0 +1,10 @@
+mission_behavior_tree:
+  ros__parameters:
+    tree_file: stop.xml
+    tick_rate_hz: 10.0
+    retry_delay_sec: 5.0
+    groot_port: 1667
+
+    blackboard:
+      switch_mode_service: /crl_commander/switch_mode
+      switch_mode_timeout: 5.0   # [s] for crl_commander to answer

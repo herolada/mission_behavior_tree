@@ -18,10 +18,11 @@ namespace mission_behavior_tree
 bool setBlackboardFromParameter(
   BT::Blackboard & blackboard, const std::string & key, const rclcpp::Parameter & param);
 
-// Copies every "<prefix>.<key>" parameter of `node` into the blackboard as
+// Copies every "<prefix>.<key>" entry of `parameters` into the blackboard as
 // <key> and returns the keys set. Parameters that cannot be stored are skipped
 // with a warning.
 std::vector<std::string> loadBlackboardParameters(
-  rclcpp::Node & node, BT::Blackboard & blackboard, const std::string & prefix = "blackboard");
+  const std::vector<rclcpp::Parameter> & parameters, BT::Blackboard & blackboard,
+  const rclcpp::Logger & logger, const std::string & prefix = "blackboard");
 
 }  // namespace mission_behavior_tree

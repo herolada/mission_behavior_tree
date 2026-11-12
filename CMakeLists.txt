@@ -12,13 +12,21 @@ find_package(behaviortree_cpp REQUIRED)
 find_package(ament_index_cpp REQUIRED)
 find_package(crl_commander_interfaces REQUIRED)
 find_package(commander_operator_interfaces REQUIRED)
+find_package(rosidl_default_generators REQUIRED)
 
-# ── BT nodes ──────────────────────────────────────────────────────────────────
+rosidl_generate_interfaces(${PROJECT_NAME}
+  "srv/LoadMission.srv"
+)
+rosidl_get_typesupport_target(cpp_typesupport_target ${PROJECT_NAME} rosidl_typesupport_cpp)
+
+# ── BT nodes and the tree runner ──────────────────────────────────────────────
 add_library(mission_bt_nodes SHARED
   src/request_monitor.cpp
   src/operator_request_action.cpp
   src/wait_for_message_action.cpp
+  src/commander_switch_mode_action.cpp
   src/blackboard_parameters.cpp
+  src/mission_behavior_tree.cpp
 )
 target_compile_features(mission_bt_nodes PUBLIC cxx_std_17)
 target_include_directories(mission_bt_nodes PUBLIC
@@ -28,8 +36,10 @@ target_include_directories(mission_bt_nodes PUBLIC
 target_link_libraries(mission_bt_nodes PUBLIC
   rclcpp::rclcpp
   behaviortree_cpp::behaviortree_cpp
+  ament_index_cpp::ament_index_cpp
   ${crl_commander_interfaces_TARGETS}
   ${commander_operator_interfaces_TARGETS}
+  "${cpp_typesupport_target}"
 )
 
 # ── Tree runner node ──────────────────────────────────────────────────────────
@@ -38,7 +48,6 @@ add_executable(mission_bt_node
 )
 target_link_libraries(mission_bt_node
   mission_bt_nodes
-  ament_index_cpp::ament_index_cpp
 )
 
 install(TARGETS mission_bt_nodes
@@ -103,10 +112,31 @@ if(BUILD_TESTING)
     mission_bt_nodes
     ${std_msgs_TARGETS}
   )
+
+  ament_add_gtest(test_commander_switch_mode
+    test/test_commander_switch_mode.cpp
+  )
+  target_link_libraries(test_commander_switch_mode
+    mission_bt_nodes
+  )
+
+  # Reloads the real mission configs and trees in a running MissionBehaviorTree.
+  ament_add_gtest(test_load_mission
+    test/test_load_mission.cpp
+  )
+  target_link_libraries(test_load_mission
+    mission_bt_nodes
+  )
+  target_compile_definitions(test_load_mission PRIVATE
+    BATTERY_PATROL_TREE_XML="${CMAKE_CURRENT_SOURCE_DIR}/behavior_trees/battery_patrol.xml"
+    BATTERY_PATROL_CONFIG="${CMAKE_CURRENT_SOURCE_DIR}/config/battery_patrol.yaml"
+    STOP_TREE_XML="${CMAKE_CURRENT_SOURCE_DIR}/behavior_trees/stop.xml"
+    STOP_CONFIG="${CMAKE_CURRENT_SOURCE_DIR}/config/stop.yaml"
+  )
 endif()
 
 ament_export_include_directories(include/${PROJECT_NAME})
 ament_export_libraries(mission_bt_nodes)
-ament_export_dependencies(rclcpp behaviortree_cpp crl_commander_interfaces commander_operator_interfaces)
+ament_export_dependencies(rclcpp behaviortree_cpp crl_commander_interfaces commander_operator_interfaces rosidl_default_runtime)
 
 ament_package()

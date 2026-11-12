@@ -28,7 +28,23 @@ mission_behavior_tree:
 - A key the tree uses but the YAML lacks is only reported when that node is first ticked.
 - The tree is restarted right after it succeeds, and `retry_delay_sec` after it fails.
 
-Always registered: `OperatorRequest`, `WaitForMessage` (below), and the BT.CPP built-ins.
+Always registered: `OperatorRequest`, `WaitForMessage`, `CommanderSwitchMode` (below), and the BT.CPP built-ins.
+
+### Switching missions at runtime
+
+```
+ros2 service call /mission_behavior_tree/load_mission mission_behavior_tree/srv/LoadMission "{config_file: stop.yaml}"
+```
+
+`config_file` is relative to the package's `config/` directory, or absolute. The running tree is halted and replaced, and all parameters are replaced by those in the file. Keys the new file does not set go back to their defaults. The new blackboard starts empty, so latches like `recharging` start over.
+
+- If the file or its tree cannot be loaded, the service reports the error and the current mission keeps running.
+- `use_sim_time` is not affected.
+- Halting a tree sends nothing to the commander, so the robot follows its current goal until the new mission commands something else. Load the `stop` mission to stop it.
+
+### stop.xml
+
+Calls `crl_commander`'s `~/switch_mode` with `stop` once, then stays RUNNING until another mission is loaded. If the call fails, it is retried after `retry_delay_sec`.
 
 ### Subtrees
 
@@ -76,6 +92,16 @@ The request is sent once per entry of the node, never on re-ticks (every request
 | `state_topic` | `/crl_commander/state` | |
 | `accept_timeout` | `10.0` | [s] |
 | `stuck_timeout` | `30.0` | [s] |
+
+### CommanderSwitchMode
+
+Calls `crl_commander`'s `~/switch_mode` once per entry and stays RUNNING until it answers. It succeeds if the commander accepts the mode, and fails if the mode is rejected or the service does not answer within `timeout`.
+
+| Port | Default | |
+|---|---|---|
+| `mode` | | e.g. `stop` |
+| `service` | `/crl_commander/switch_mode` | |
+| `timeout` | `5.0` | [s] |
 
 ### WaitForMessage
 

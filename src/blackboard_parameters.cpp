@@ -1,7 +1,6 @@
 #include "mission_behavior_tree/blackboard_parameters.hpp"
 
 #include <charconv>
-#include <map>
 
 namespace mission_behavior_tree
 {
@@ -68,17 +67,19 @@ bool setBlackboardFromParameter(
 }
 
 std::vector<std::string> loadBlackboardParameters(
-  rclcpp::Node & node, BT::Blackboard & blackboard, const std::string & prefix)
+  const std::vector<rclcpp::Parameter> & parameters, BT::Blackboard & blackboard,
+  const rclcpp::Logger & logger, const std::string & prefix)
 {
-  std::map<std::string, rclcpp::Parameter> params;
-  node.get_parameters(prefix, params);
+  const std::string dotted_prefix = prefix + ".";
 
   std::vector<std::string> keys;
-  for (const auto & [key, param] : params) {
+  for (const auto & param : parameters) {
+    if (param.get_name().rfind(dotted_prefix, 0) != 0) continue;
+    const auto key = param.get_name().substr(dotted_prefix.size());
     if (setBlackboardFromParameter(blackboard, key, param)) {
       keys.push_back(key);
     } else {
-      RCLCPP_WARN(node.get_logger(), "Parameter '%s' has unsupported type '%s', not put in "
+      RCLCPP_WARN(logger, "Parameter '%s' has unsupported type '%s', not put in "
         "the blackboard.", param.get_name().c_str(), param.get_type_name().c_str());
     }
   }

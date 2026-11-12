@@ -13,6 +13,7 @@
 #include <behaviortree_cpp/bt_factory.h>
 #include <behaviortree_cpp/utils/shared_library.h>
 
+#include <rclcpp/parameter_map.hpp>
 #include <rclcpp/rclcpp.hpp>
 
 #include "mission_behavior_tree/blackboard_parameters.hpp"
@@ -109,13 +110,13 @@ protected:
       [](BT::TreeNode &) {return BT::NodeStatus::SUCCESS;},
       mission_behavior_tree::WaitForMessageAction::providedPorts());
 
-    // Same node name and options as mission_bt_node, so the YAML applies.
-    auto node = std::make_shared<rclcpp::Node>("mission_behavior_tree",
-      rclcpp::NodeOptions()
-      .arguments({"--ros-args", "--params-file", BATTERY_PATROL_CONFIG})
-      .automatically_declare_parameters_from_overrides(true));
+    // Same node name as mission_bt_node, so the YAML applies.
+    const char * node_name = "/mission_behavior_tree";
+    const auto parameters = rclcpp::parameters_from_map(
+      rclcpp::parameter_map_from_yaml_file(BATTERY_PATROL_CONFIG, node_name), node_name);
     auto bb = BT::Blackboard::create();
-    mission_behavior_tree::loadBlackboardParameters(*node, *bb);
+    mission_behavior_tree::loadBlackboardParameters(
+      parameters, *bb, rclcpp::get_logger("test_battery_patrol_tree"));
 
     tree_ = factory_.createTreeFromFile(BATTERY_PATROL_TREE_XML, bb);
   }
