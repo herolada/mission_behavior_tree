@@ -10,8 +10,8 @@
 #include <rclcpp/rclcpp.hpp>
 #include <std_msgs/msg/string.hpp>
 
-#include "mission_behavior_tree/srv/load_mission.hpp"
-#include "mission_behavior_tree/srv/set_mode.hpp"
+#include "mission_behavior_tree_interfaces/srv/load_mission.hpp"
+#include "mission_behavior_tree_interfaces/srv/set_mode.hpp"
 
 namespace mission_behavior_tree
 {
@@ -45,8 +45,8 @@ public:
   void shutdown();
 
 private:
-  using LoadMission = mission_behavior_tree::srv::LoadMission;
-  using SetMode = mission_behavior_tree::srv::SetMode;
+  using LoadMission = mission_behavior_tree_interfaces::srv::LoadMission;
+  using SetMode = mission_behavior_tree_interfaces::srv::SetMode;
 
   // Builds the mission and only then replaces the running one, so if this throws
   // while validating, the running mission is untouched.
